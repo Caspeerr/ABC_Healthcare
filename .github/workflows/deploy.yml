@@ -29,6 +29,9 @@ jobs:
       - name: Terraform Init
         run: terraform init
 
+      - name: Terraform State
+        run: terraform state list
+
       - name: Terraform Validate
         run: terraform validate
 
