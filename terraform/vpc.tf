@@ -4,7 +4,7 @@ resource "aws_vpc" "main" {
   enable_dns_hostnames = true
 
   tags = {
-    Name    = "abc-healthcare-vpc"
+    Name    = "abc-healthcare-sambrid-vpc"
     Project = "ABC-Healthcare"
   }
 }
