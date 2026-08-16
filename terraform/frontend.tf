@@ -71,6 +71,11 @@ resource "aws_cloudfront_distribution" "frontend" {
     allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
     cached_methods         = ["GET", "HEAD"]
 
+    # Explicitly disable caching for API endpoints
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
+
     forwarded_values {
       query_string = true
       headers      = ["*"]
@@ -79,7 +84,6 @@ resource "aws_cloudfront_distribution" "frontend" {
       }
     }
   }
-
 
   custom_error_response {
     error_code            = 403
