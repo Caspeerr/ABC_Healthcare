@@ -1,6 +1,10 @@
 resource "random_password" "db" {
   length  = 32
   special = true
+  # RDS master passwords reject '/', '@', '"', and space - restrict
+  # the special-character set to ones RDS actually allows so this
+  # can't randomly generate an invalid password.
+  override_special = "!#$%^&*()-_=+[]{}<>:?"
 }
 
 resource "aws_secretsmanager_secret" "db" {
