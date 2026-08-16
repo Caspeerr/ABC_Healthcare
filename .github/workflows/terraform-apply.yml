@@ -102,6 +102,7 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --parameters "commands=[
               \"export PATH=\$PATH:/usr/bin:/usr/local/bin\",
+              \"which aws || (apt-get update && apt-get install -y awscli)\",
               \"set -eux\",
               \"rm -rf /opt/abc-healthcare/backend\",
               \"mkdir -p /opt/abc-healthcare/backend\",
