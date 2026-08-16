@@ -101,6 +101,7 @@ jobs:
             --instance-ids "$INSTANCE" \
             --document-name "AWS-RunShellScript" \
             --parameters "commands=[
+              \"export PATH=\$PATH:/usr/bin:/usr/local/bin\",
               \"set -eux\",
               \"rm -rf /opt/abc-healthcare/backend\",
               \"mkdir -p /opt/abc-healthcare/backend\",
