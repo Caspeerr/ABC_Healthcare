@@ -1,50 +1,136 @@
-#!/bin/bash
-set -euxo pipefail
+name: Deploy ABC Healthcare
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y ca-certificates curl unzip nginx mysql-client
+on:
+  workflow_dispatch:
 
-# Install AWS CLI v2
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
-unzip -q /tmp/awscliv2.zip -d /tmp
-/tmp/aws-cli/install --bin-dir /usr/bin --install-dir /usr/local/aws-cli
-rm -rf /tmp/awscliv2.zip /tmp/aws-cli
+permissions:
+  contents: read
 
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
 
-# Enable SSM Agent
-systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true
-systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
 
-mkdir -p /opt/abc-healthcare/backend
-chown -R ubuntu:ubuntu /opt/abc-healthcare
+      - name: Bootstrap Terraform state bucket
+        run: |
+          if ! aws s3api head-bucket --bucket abc-healthcare-sambrid-tfstate 2>/dev/null; then
+            aws s3api create-bucket \
+              --bucket abc-healthcare-sambrid-tfstate \
+              --region ap-south-1 \
+              --create-bucket-configuration LocationConstraint=ap-south-1
+          fi
+          aws s3api put-bucket-versioning \
+            --bucket abc-healthcare-sambrid-tfstate \
+            --versioning-configuration Status=Enabled
+          aws s3api put-public-access-block \
+            --bucket abc-healthcare-sambrid-tfstate \
+            --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 
-cat >/etc/systemd/system/abc-healthcare.service <<'EOF'
-[Unit]
-Description=ABC Healthcare Node.js backend
-After=network-online.target
-Wants=network-online.target
+      - name: Terraform Init
+        run: terraform init -input=false
 
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/opt/abc-healthcare/backend
-Environment=PORT=3000
-Environment=DB_SECRET_ARN=${secret_arn}
-Environment=DB_HOST=${db_host}
-Environment=API_AUTH_SECRET_ARN=${api_auth_arn}
-Environment=FRONTEND_URL=${frontend_url}
-Environment=AWS_REGION=${region}
-ExecStart=/usr/bin/node /opt/abc-healthcare/backend/server.js
-Restart=always
-RestartSec=5
+      - name: Terraform Validate
+        run: terraform validate
 
-[Install]
-WantedBy=multi-user.target
-EOF
+      - name: Terraform Apply
+        env:
+          TF_VAR_vpc_id: ${{ secrets.VPC_ID }}
+          TF_VAR_subnet_ids: ${{ secrets.SUBNET_IDS }}
+          TF_VAR_ec2_subnet_id: ${{ secrets.EC2_SUBNET_ID }}
+        run: terraform apply -auto-approve -input=false
 
-systemctl daemon-reload
-systemctl enable abc-healthcare.service
-systemctl stop abc-healthcare.service || true
+      - name: Build frontend
+        working-directory: app/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload frontend to S3
+        working-directory: terraform
+        run: |
+          BUCKET="$(terraform output -raw frontend_bucket)"
+          aws s3 sync ../app/frontend/dist "s3://${BUCKET}" --delete
+
+      - name: Package backend
+        working-directory: app
+        run: |
+          mkdir -p ../.deploy
+          zip -qr ../.deploy/backend.zip backend \
+            -x "backend/node_modules/*" "backend/.env" "backend/.env.*"
+
+      - name: Upload backend artifact
+        working-directory: terraform
+        run: |
+          BUCKET="$(terraform output -raw deploy_bucket)"
+          aws s3 cp ../.deploy/backend.zip "s3://${BUCKET}/backend/backend.zip"
+
+      - name: Wait for SSM
+        working-directory: terraform
+        run: |
+          INSTANCE="$(terraform output -raw ec2_instance_id)"
+          for i in {1..30}; do
+            STATUS="$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=${INSTANCE}" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text 2>/dev/null || true)"
+            if [ "$STATUS" = "Online" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "EC2 did not become SSM Online in time"
+          exit 1
+
+      - name: Deploy backend through SSM
+        working-directory: terraform
+        run: |
+          INSTANCE="$(terraform output -raw ec2_instance_id)"
+          BUCKET="$(terraform output -raw deploy_bucket)"
+          SECRET="$(terraform output -raw db_secret_arn)"
+          DB_HOST="$(terraform output -raw rds_endpoint)"
+          COMMAND_ID="$(aws ssm send-command \
+            --instance-ids "$INSTANCE" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[
+              \"export PATH=/usr/local/bin:/usr/bin:\$PATH\",
+              \"set -eux\",
+              \"rm -rf /opt/abc-healthcare/backend\",
+              \"mkdir -p /opt/abc-healthcare/backend\",
+              \"aws s3 cp s3://${BUCKET}/backend/backend.zip /tmp/backend.zip\",
+              \"unzip -qo /tmp/backend.zip -d /opt/abc-healthcare\",
+              \"chown -R ubuntu:ubuntu /opt/abc-healthcare\",
+              \"cd /opt/abc-healthcare/backend && npm ci --omit=dev\",
+              \"export DB_SECRET_ARN=${SECRET}\",
+              \"export DB_HOST=${DB_HOST}\",
+              \"export AWS_REGION=ap-south-1\",
+              \"node init-db.js\",
+              \"systemctl restart abc-healthcare.service\"
+            ]" \
+            --query 'Command.CommandId' --output text)"
+          set +e
+          aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE"
+          WAIT_STATUS=$?
+          set -e
+
+          echo "----- SSM command output -----"
+          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE"
+
+          if [ "$WAIT_STATUS" -ne 0 ]; then
+            echo "SSM command did not complete successfully - see output above for the actual error."
+            exit 1
+          fi
+
+      - name: Show application URL
+        working-directory: terraform
+        run: terraform output cloudfront_url
