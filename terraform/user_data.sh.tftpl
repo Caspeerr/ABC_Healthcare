@@ -1,0 +1,43 @@
+#!/bin/bash
+set -euxo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y ca-certificates curl unzip nginx mysql-client
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+
+# Ubuntu 24.04 images normally include SSM Agent; ensure the service is enabled.
+systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+
+mkdir -p /opt/abc-healthcare/backend
+chown -R ubuntu:ubuntu /opt/abc-healthcare
+
+cat >/etc/systemd/system/abc-healthcare.service <<'EOF'
+[Unit]
+Description=ABC Healthcare Node.js backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/abc-healthcare/backend
+Environment=PORT=3000
+Environment=DB_SECRET_ARN=${secret_arn}
+Environment=DB_HOST=${db_host}
+Environment=API_AUTH_SECRET_ARN=${api_auth_arn}
+Environment=FRONTEND_URL=${frontend_url}
+Environment=AWS_REGION=${region}
+ExecStart=/usr/bin/node /opt/abc-healthcare/backend/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable abc-healthcare.service
+systemctl stop abc-healthcare.service || true

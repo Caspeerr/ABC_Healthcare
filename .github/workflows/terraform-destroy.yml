@@ -1,0 +1,49 @@
+name: Destroy ABC Healthcare
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Bootstrap Terraform state bucket
+        run: |
+          if ! aws s3api head-bucket --bucket abc-healthcare-sambrid-tfstate 2>/dev/null; then
+            aws s3api create-bucket \
+              --bucket abc-healthcare-sambrid-tfstate \
+              --region ap-south-1 \
+              --create-bucket-configuration LocationConstraint=ap-south-1
+          fi
+          aws s3api put-bucket-versioning \
+            --bucket abc-healthcare-sambrid-tfstate \
+            --versioning-configuration Status=Enabled
+          aws s3api put-public-access-block \
+            --bucket abc-healthcare-sambrid-tfstate \
+            --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+      - name: Terraform Init
+        run: terraform init -input=false
+      - name: Terraform Destroy
+        env:
+          TF_VAR_vpc_id: ${{ secrets.VPC_ID }}
+          TF_VAR_subnet_ids: ${{ secrets.SUBNET_IDS }}
+          TF_VAR_ec2_subnet_id: ${{ secrets.EC2_SUBNET_ID }}
+        run: terraform destroy -auto-approve -input=false
