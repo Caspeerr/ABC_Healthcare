@@ -24,6 +24,4 @@ resource "aws_instance" "backend" {
   tags = {
     Name = "${var.project_name}-backend"
   }
-  
 }
-
