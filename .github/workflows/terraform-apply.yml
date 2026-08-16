@@ -41,8 +41,10 @@ jobs:
 
       - name: Terraform Init
         run: terraform init -input=false
+
       - name: Terraform Validate
         run: terraform validate
+
       - name: Terraform Apply
         env:
           TF_VAR_vpc_id: ${{ secrets.VPC_ID }}
@@ -97,24 +99,30 @@ jobs:
           BUCKET="$(terraform output -raw deploy_bucket)"
           SECRET="$(terraform output -raw db_secret_arn)"
           DB_HOST="$(terraform output -raw rds_endpoint)"
+          
           COMMAND_ID="$(aws ssm send-command \
             --instance-ids "$INSTANCE" \
             --document-name "AWS-RunShellScript" \
-            --parameters "commands=[
-              \"set -eux\",
-              \"rm -rf /opt/abc-healthcare/backend\",
-              \"mkdir -p /opt/abc-healthcare/backend\",
-              \"aws s3 cp s3://${BUCKET}/backend/backend.zip /tmp/backend.zip\",
-              \"unzip -q /tmp/backend.zip -d /opt/abc-healthcare\",
-              \"chown -R ubuntu:ubuntu /opt/abc-healthcare\",
-              \"cd /opt/abc-healthcare/backend && npm ci --omit=dev\",
-              \"export DB_SECRET_ARN=${SECRET}\",
-              \"export DB_HOST=${DB_HOST}\",
-              \"export AWS_REGION=ap-south-1\",
-              \"node init-db.js\",
-              \"systemctl restart abc-healthcare.service\"
-            ]" \
+            --parameters commands='[
+              "export PATH=/usr/local/bin:/usr/bin:$PATH",
+              "set -eux",
+              "rm -rf /opt/abc-healthcare/backend",
+              "mkdir -p /opt/abc-healthcare/backend",
+              "aws s3 cp s3://'"$BUCKET"'/backend/backend.zip /tmp/backend.zip",
+              "unzip -qo /tmp/backend.zip -d /opt/abc-healthcare",
+              "chown -R ubuntu:ubuntu /opt/abc-healthcare",
+              "cd /opt/abc-healthcare/backend && npm ci --omit=dev",
+              "export DB_SECRET_ARN='"$SECRET"'",
+              "export DB_HOST='"$DB_HOST"'",
+              "export AWS_REGION=ap-south-1",
+              "node init-db.js",
+              "printf \"[Unit]\\nDescription=ABC Healthcare Backend Service\\nAfter=network.target\\n\\n[Service]\\nType=simple\\nUser=ubuntu\\nWorkingDirectory=/opt/abc-healthcare/backend\\nEnvironment=DB_SECRET_ARN='"$SECRET"'\\nEnvironment=DB_HOST='"$DB_HOST"'\\nEnvironment=AWS_REGION=ap-south-1\\nEnvironment=PORT=5000\\nExecStart=/usr/bin/node index.js\\nRestart=always\\n\\n[Install]\\nWantedBy=multi-user.target\\n\" > /etc/systemd/system/abc-healthcare.service",
+              "systemctl daemon-reload",
+              "systemctl enable abc-healthcare.service",
+              "systemctl restart abc-healthcare.service"
+            ]' \
             --query 'Command.CommandId' --output text)"
+
           set +e
           aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE"
           WAIT_STATUS=$?
