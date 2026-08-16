@@ -24,6 +24,6 @@ resource "aws_instance" "backend" {
   tags = {
     Name = "${var.project_name}-backend"
   }
-  user_data_replace_on_change = true
+  
 }
 
