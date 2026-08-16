@@ -101,9 +101,10 @@ jobs:
             --instance-ids "$INSTANCE" \
             --document-name "AWS-RunShellScript" \
             --parameters "commands=[
+              \"export DEBIAN_FRONTEND=noninteractive\",
               \"export PATH=\$PATH:/usr/bin:/usr/local/bin\",
-              \"which unzip || (apt-get update && apt-get install -y unzip curl)\",
-              \"which aws || (curl -sL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws-cli/install --bin-dir /usr/bin --install-dir /usr/local/aws-cli && rm -rf /tmp/awscliv2.zip /tmp/aws-cli)\",
+              \"which unzip || apt-get update && apt-get install -y unzip curl\",
+              \"which aws || (curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws-cli/install --bin-dir /usr/bin --install-dir /usr/local/aws-cli && rm -rf /tmp/awscliv2.zip /tmp/aws-cli)\",
               \"set -eux\",
               \"rm -rf /opt/abc-healthcare/backend\",
               \"mkdir -p /opt/abc-healthcare/backend\",
