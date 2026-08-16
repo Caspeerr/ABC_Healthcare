@@ -105,6 +105,7 @@ jobs:
               \"export PATH=\$PATH:/usr/bin:/usr/local/bin\",
               \"which unzip || (apt-get update && apt-get install -y unzip curl)\",
               \"which aws || (rm -rf /tmp/aws /tmp/awscliv2.zip && curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip && unzip -qo /tmp/awscliv2.zip -d /tmp && /tmp/aws/install --bin-dir /usr/bin --install-dir /usr/local/aws-cli && rm -rf /tmp/awscliv2.zip /tmp/aws)\",
+              \"which npm || (curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs)\",
               \"set -eux\",
               \"rm -rf /opt/abc-healthcare/backend\",
               \"mkdir -p /opt/abc-healthcare/backend\",
